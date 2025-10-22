@@ -11,7 +11,7 @@ if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
         B="\033[0;34m"     # Blue
         C="\033[0;36m"     # Cyan
         BOLD="\033[1m"     # Bold
-        NC="\033[0m"       # Reset
+        NC="\033[0m"       # Resetg:\My Drive\Arch linux\USB_ARCH\Arch_USB\001_USB_Partitioning_and_Install_and_Config.sh
     else
         # Terminal supports colors
         R=""
