@@ -11,7 +11,7 @@ if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
         B="\033[0;34m"     # Blue
         C="\033[0;36m"     # Cyan
         BOLD="\033[1m"     # Bold
-        NC="\033[0m"       # Resetg:\My Drive\Arch linux\USB_ARCH\Arch_USB\001_USB_Partitioning_and_Install_and_Config.sh
+        NC="\033[0m"       # Reset
     else
         # Terminal supports colors
         R=""
@@ -86,19 +86,24 @@ function check_and_backup() {
 function confirmation_y_or_n() {
     while true; do
         print_msg "$1 (y/n)"
-        read -r response
-        response="${response:-y}"
-        response="${response,,}"
+    read -r response
+    response="${response,,}"
         
         case $response in
             y|yes) 
                 print_success "Continue with the answer: \"Yes\""
-                eval "$2='$response'"
+                # Safely assign the response to the caller's variable name without using eval
+                if [ -n "${2:-}" ]; then
+                    # Use printf -v (bash builtin) to assign to variable by name
+                    printf -v "$2" '%s' "$response"
+                fi
                 return 0
                 ;;
             n|no)
                 print_msg "Operation cancelled"
-                eval "$2='$response'"
+                if [ -n "${2:-}" ]; then
+                    printf -v "$2" '%s' "$response"
+                fi
                 return 1
                 ;;
             *) 
@@ -123,7 +128,7 @@ lsblk
 echo
 
 # Request USB drive confirmation
-print_msg "Please enter the USB drive path (e.g., /dev/sdb):"
+print_msg "Please enter the USB drive path (e.g., /dev/sdX):"
 read -r USB_DRIVE
 
 # Check drive exists
@@ -171,16 +176,40 @@ echo
 
 # Clean and partition
 print_msg "Cleaning and partitioning the drive..."
-wipefs -a ${USB_DRIVE} && print_success "Clean successful" || print_failed "Error cleaning"
-sgdisk --zap-all ${USB_DRIVE}
-sgdisk -o ${USB_DRIVE}
-sgdisk -n 1:1M:+2M -t 1:ef02 ${USB_DRIVE}
-sgdisk -n 2:0:+512M -t 2:ef00 ${USB_DRIVE}
-sgdisk -n 3:0:0 -t 3:8300 ${USB_DRIVE}
+## Perform destructive operations carefully: check return codes and abort on failure
+if wipefs -a "${USB_DRIVE}"; then
+    print_success "Clean successful"
+else
+    print_failed "Error cleaning ${USB_DRIVE} with wipefs"
+    exit 1
+fi
+
+# Use sgdisk with checks after each command
+run_sgdisk() {
+    local args=("$@")
+    local out
+    if out=$(sgdisk "${args[@]}" 2>&1); then
+        print_success "sgdisk ${args[*]} succeeded"
+        return 0
+    else
+        print_failed "sgdisk ${args[*]} failed: ${out}"
+        return 1
+    fi
+}
+
+if ! run_sgdisk --zap-all "${USB_DRIVE}"; then exit 1; fi
+if ! run_sgdisk -o "${USB_DRIVE}"; then exit 1; fi
+if ! run_sgdisk -n 1:1M:+2M -t 1:ef02 "${USB_DRIVE}"; then exit 1; fi
+if ! run_sgdisk -n 2:0:+512M -t 2:ef00 "${USB_DRIVE}"; then exit 1; fi
+if ! run_sgdisk -n 3:0:0 -t 3:8300 "${USB_DRIVE}"; then exit 1; fi
 
 print_msg "Final partition table:"
-sgdisk -p ${USB_DRIVE}
-lsblk ${USB_DRIVE}
+if ! run_sgdisk -p "${USB_DRIVE}"; then
+    print_warn "Unable to print partition table with sgdisk, showing lsblk instead"
+    lsblk "${USB_DRIVE}"
+else
+    lsblk "${USB_DRIVE}"
+fi
 
 # --- New section: Live environment preparation ---
 print_msg "Preparing the live environment..."
@@ -625,6 +654,9 @@ MEMCONF
 chmod +x /usr/local/bin/configure-memory
 
 # Create a service to run the script at boot
+if [ -e "/etc/systemd/system/configure-memory.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/configure-memory.service"
+else
 cat > /etc/systemd/system/configure-memory.service <<'MEMSVC'
 [Unit]
 Description=Configure Memory Management Parameters
@@ -639,6 +671,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 MEMSVC
+fi
 
 # Enable services
 systemctl enable configure-memory.service
@@ -810,6 +843,9 @@ CHK
 chmod +x /usr/local/bin/check-usb-health
 
 # Service and timer for USB health check
+if [ -e "/etc/systemd/system/usb-health.timer" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/usb-health.timer"
+else
 cat > /etc/systemd/system/usb-health.timer <<TIMER
 [Unit]
 Description=Check USB health periodically
@@ -825,7 +861,11 @@ AccuracySec=1m
 [Install]
 WantedBy=timers.target
 TIMER
+fi
 
+if [ -e "/etc/systemd/system/usb-health.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/usb-health.service"
+else
 cat > /etc/systemd/system/usb-health.service <<SVC
 [Unit]
 Description=USB Health Monitoring
@@ -845,6 +885,7 @@ TimeoutSec=300
 Restart=on-failure
 RestartSec=30s
 SVC
+fi
 
 systemctl enable usb-health.timer
 cat > /etc/initcpio/hooks/overlay <<HOOK
@@ -980,6 +1021,9 @@ EOF
 chmod +x /usr/local/bin/enforced-sync
 
 # Periodic sync service
+if [ -e "/etc/systemd/system/periodic-sync.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/periodic-sync.service"
+else
 cat > /etc/systemd/system/periodic-sync.service <<EOF
 [Unit]
 Description=Periodic filesystem sync
@@ -993,7 +1037,11 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
+if [ -e "/etc/systemd/system/periodic-sync.timer" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/periodic-sync.timer"
+else
 cat > /etc/systemd/system/periodic-sync.timer <<EOF
 [Unit]
 Description=Periodic filesystem sync every 5 minutes
@@ -1006,6 +1054,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+fi
 
 systemctl enable periodic-sync.timer
 
@@ -1206,6 +1255,9 @@ EOF
 chmod +x /usr/local/bin/create-system-snapshot
 
 # Periodic snapshot service
+if [ -e "/etc/systemd/system/system-snapshot.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/system-snapshot.service"
+else
 cat > /etc/systemd/system/system-snapshot.service <<EOF
 [Unit]
 Description=Create system snapshot
@@ -1216,7 +1268,11 @@ Type=oneshot
 ExecStart=/usr/local/bin/create-system-snapshot
 User=root
 EOF
+fi
 
+if [ -e "/etc/systemd/system/system-snapshot.timer" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/system-snapshot.timer"
+else
 cat > /etc/systemd/system/system-snapshot.timer <<EOF
 [Unit]
 Description=Daily system snapshot
@@ -1229,6 +1285,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+fi
 
 systemctl enable system-snapshot.timer
 
@@ -1262,6 +1319,9 @@ EOF
 chmod +x /usr/local/bin/performance-telemetry
 
 # Telemetry service
+if [ -e "/etc/systemd/system/performance-telemetry.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/performance-telemetry.service"
+else
 cat > /etc/systemd/system/performance-telemetry.service <<EOF
 [Unit]
 Description=Performance telemetry collection
@@ -1272,7 +1332,11 @@ Type=oneshot
 ExecStart=/usr/local/bin/performance-telemetry
 User=root
 EOF
+fi
 
+if [ -e "/etc/systemd/system/performance-telemetry.timer" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/performance-telemetry.timer"
+else
 cat > /etc/systemd/system/performance-telemetry.timer <<EOF
 [Unit]
 Description=Collect performance metrics every hour
@@ -1285,6 +1349,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+fi
 
 systemctl enable performance-telemetry.timer
 
@@ -1588,6 +1653,9 @@ EOF
 chmod +x /usr/local/bin/atomic-update-manager
 
 # سرویس مدیریت به‌روزرسانی
+if [ -e "/etc/systemd/system/atomic-update.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/atomic-update.service"
+else
 cat > /etc/systemd/system/atomic-update.service <<EOF
 [Unit]
 Description=Atomic System Update Service
@@ -1601,8 +1669,12 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 # تایمر به‌روزرسانی خودکار هفتگی
+if [ -e "/etc/systemd/system/atomic-update.timer" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/atomic-update.timer"
+else
 cat > /etc/systemd/system/atomic-update.timer <<EOF
 [Unit]
 Description=Weekly atomic system update
@@ -1616,6 +1688,7 @@ RandomizedDelaySec=1800
 [Install]
 WantedBy=timers.target
 EOF
+fi
 
 systemctl enable atomic-update.timer
 
@@ -2080,6 +2153,9 @@ resources/app
 EOF
 
 # Prefetch services
+if [ -e "/etc/systemd/system/smart-prefetch.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/smart-prefetch.service"
+else
 cat > /etc/systemd/system/smart-prefetch.service <<EOF
 [Unit]
 Description=Smart Application Prefetching
@@ -2093,19 +2169,26 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
-cat > /etc/systemd/system/smart-prefetch.timer <<EOF
+if [ -e "/etc/systemd/system/periodic-sync.timer" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/periodic-sync.timer"
+else
+cat > /etc/systemd/system/periodic-sync.timer <<EOF
 [Unit]
-Description=Run smart prefetch every 6 hours
-Requires=smart-prefetch.service
+Description=Periodic filesystem sync timer
+Requires=periodic-sync.service
 
 [Timer]
-OnCalendar=0/6:00:00
+OnCalendar=*:0/5
+RandomizedDelaySec=30
+AccuracySec=1s
 Persistent=true
 
 [Install]
 WantedBy=timers.target
 EOF
+fi
 
 systemctl enable smart-prefetch.timer
 
