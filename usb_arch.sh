@@ -366,14 +366,14 @@ print_msg "Live Environment Kernel Version: $LIVE_KERNEL_VERSION"
 
 # Install base system
 print_msg "Installing base Arch Linux system..."
-mkdir -p /tmp/arch_root
+mkdir -p /mnt/usb/persistent/arch_root
 
 print_msg "Installing selected packages..."
 # Use -k to maintain same kernel version as Live environment
-pacstrap -c -k /tmp/arch_root $PACKAGES
+pacstrap -c -k /mnt/usb/persistent/arch_root $PACKAGES
 
 # Check installed kernel version
-INSTALLED_KERNEL_VERSION=$(chroot /tmp/arch_root pacman -Q linux | awk '{print $2}' | sed 's/\.arch.*/.x86_64/')
+INSTALLED_KERNEL_VERSION=$(chroot /mnt/usb/persistent/arch_root pacman -Q linux | awk '{print $2}' | sed 's/\.arch.*/.x86_64/')
 print_msg "Installed Kernel Version: $INSTALLED_KERNEL_VERSION"
 
 # Ensure version consistency
@@ -384,7 +384,7 @@ if [[ "$LIVE_KERNEL_VERSION" != "$INSTALLED_KERNEL_VERSION" ]]; then
     
     # Install matching Live environment version if needed
     if confirmation_y_or_n "Do you want to install the Live environment kernel version?" install_live_kernel; then
-        pacstrap -c /tmp/arch_root linux-$(echo $LIVE_KERNEL_VERSION | cut -d'.' -f1-2)
+        pacstrap -c /mnt/usb/persistent/arch_root linux-$(echo $LIVE_KERNEL_VERSION | cut -d'.' -f1-2)
         print_success "Kernel version synchronized with Live environment"
     else
         print_warn "Continuing with different kernel versions. mkinitcpio might need manual adjustment."
@@ -396,11 +396,11 @@ run_mkinitcpio() {
     local kernel_version="$1"
     print_msg "Running mkinitcpio for kernel version $kernel_version"
     
-    arch-chroot /tmp/arch_root /bin/bash -c "mkinitcpio --kernel $kernel_version -P" || {
+    arch-chroot /mnt/usb/persistent/arch_root /bin/bash -c "mkinitcpio --kernel $kernel_version -P" || {
         print_failed "mkinitcpio failed for kernel version $kernel_version"
         if confirmation_y_or_n "Do you want to retry with default settings?" retry_default; then
             print_msg "Retrying with default settings..."
-            arch-chroot /tmp/arch_root /bin/bash -c "mkinitcpio -P"
+            arch-chroot /mnt/usb/persistent/arch_root /bin/bash -c "mkinitcpio -P"
         else
             return 1
         fi
@@ -419,10 +419,10 @@ if ! run_mkinitcpio "$INSTALLED_KERNEL_VERSION"; then
 fi
 
 print_msg "Generating fstab..."
-genfstab -U /tmp/arch_root >> /tmp/arch_root/etc/fstab
+genfstab -U /mnt/usb/persistent/arch_root >> /mnt/usb/persistent/arch_root/etc/fstab
 
 
-cat > /tmp/arch_root/setup.sh <<'EOF'
+cat > /mnt/usb/persistent/arch_root/setup.sh <<'EOF'
 #!/bin/bash
 ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
 hwclock --systohc
@@ -1195,6 +1195,9 @@ EOF
 chmod +x /usr/local/bin/io-health-monitor
 
 # I/O health monitoring service
+if [ -e "/etc/systemd/system/io-health-monitor.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/io-health-monitor.service"
+else
 cat > /etc/systemd/system/io-health-monitor.service <<EOF
 [Unit]
 Description=I/O Health Monitoring Service
@@ -1209,6 +1212,7 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl enable io-health-monitor.service
 
@@ -1397,6 +1401,9 @@ EOF
 chmod +x /usr/local/bin/power-failure-detector
 
 # Power failure detection service
+if [ -e "/etc/systemd/system/power-failure-detector.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/power-failure-detector.service"
+else
 cat > /etc/systemd/system/power-failure-detector.service <<EOF
 [Unit]
 Description=Power Failure Detection Service
@@ -1411,6 +1418,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl enable power-failure-detector.service
 
@@ -1980,6 +1988,9 @@ EOF
 chmod +x /usr/local/bin/configure-zswap
 
 # سرویس پیکربندی ZSWAP
+if [ -e "/etc/systemd/system/configure-zswap.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/configure-zswap.service"
+else
 cat > /etc/systemd/system/configure-zswap.service <<EOF
 [Unit]
 Description=Configure ZSWAP Parameters
@@ -1994,6 +2005,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl enable configure-zswap.service
 
@@ -2023,6 +2035,9 @@ EOF
 chmod +x /usr/local/bin/optimize-bcachefs
 
 # سرویس بهینه‌سازی Bcachefs
+if [ -e "/etc/systemd/system/bcachefs-optimize.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/bcachefs-optimize.service"
+else
 cat > /etc/systemd/system/bcachefs-optimize.service <<EOF
 [Unit]
 Description=Bcachefs Optimizations
@@ -2047,6 +2062,7 @@ RestartSec=30s
 [Install]
 WantedBy=sysinit.target
 EOF
+fi
 
 systemctl enable bcachefs-optimize.service
 
@@ -2348,6 +2364,9 @@ EOF
 chmod +x /usr/local/bin/hardware-profile-manager
 
 # Hardware profile application service
+if [ -e "/etc/systemd/system/hardware-profile.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/hardware-profile.service"
+else
 cat > /etc/systemd/system/hardware-profile.service <<EOF
 [Unit]
 Description=Hardware Profile Manager
@@ -2361,6 +2380,7 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl enable hardware-profile.service
 
@@ -2406,6 +2426,9 @@ EOF
 chmod +x /usr/local/bin/advanced-write-optimizer
 
 # I/O optimization service
+if [ -e "/etc/systemd/system/io-optimizer.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/io-optimizer.service"
+else
 cat > /etc/systemd/system/io-optimizer.service <<EOF
 [Unit]
 Description=Advanced I/O Optimizer
@@ -2419,10 +2442,14 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl enable io-optimizer.service
 
 # 6. Final Integration
+if [ -e "/etc/systemd/system/final-optimizations.service" ]; then
+    print_warn "Skipping existing unit /etc/systemd/system/final-optimizations.service"
+else
 cat > /etc/systemd/system/final-optimizations.service <<EOF
 [Unit]
 Description=Final System Optimizations Integration
@@ -2437,6 +2464,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
 
 systemctl enable final-optimizations.service
 
